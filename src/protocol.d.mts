@@ -17,7 +17,7 @@ export type ParsedReply =
   | { type: 'final'; content: string }
 
 export declare class ProtocolError extends Error {
-  kind: 'no-block' | 'bad-json' | 'bad-shape' | 'quota'
+  kind: 'no-block' | 'bad-json' | 'bad-shape' | 'quota' | 'no-tools' | 'empty'
   raw: string
 }
 
@@ -36,4 +36,13 @@ export declare function renderDelta(delta: OpencodeMessage[]): string
 export declare function renderToolResult(name: string, content: unknown): string
 export declare function contentToText(content: unknown): string
 export declare function parseReply(text: string): ParsedReply
+export declare const TEXT_ONLY_DIRECTIVE: string
+export declare function classifyToollessRequest(
+  messages: OpencodeMessage[],
+): 'title' | 'compaction' | 'other'
+export declare function renderTextRequest(messages: OpencodeMessage[]): string
+export declare function renderTextRequestParts(
+  messages: OpencodeMessage[],
+): { systemPrompt: string; query: string }
+export declare function parseTextReply(text: string): { type: 'final'; content: string }
 export declare function repairPrompt(kind: string): string

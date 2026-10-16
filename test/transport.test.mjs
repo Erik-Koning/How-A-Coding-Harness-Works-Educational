@@ -167,6 +167,44 @@ test('a delta turn offers its full context on screen, but history does not carry
   assert.equal(store.snapshot().history[0].fullContext, undefined)
 })
 
+// --------------------------------------------- which Copilot chat a turn goes in
+
+test('each new chat gets a label, and delta turns keep their conversation\'s', () => {
+  const store = new TurnStore()
+  const open = (req) => {
+    const { record, wait } = store.open(req)
+    wait.catch(() => {})
+    return record
+  }
+
+  const main1 = open({ systemPrompt: 'S', query: 'q1', turnIndex: 1, conversationId: 'main' })
+  const main2 = open({ query: 'q2', turnIndex: 2, conversationId: 'main' })
+  const sub1 = open({
+    systemPrompt: 'S',
+    query: 'subagent task',
+    turnIndex: 3,
+    conversationId: 'sub',
+    parentConversationId: 'main',
+  })
+  const sub2 = open({ query: 'subagent step', turnIndex: 4, conversationId: 'sub' })
+  const main3 = open({ query: 'back in the parent', turnIndex: 5, conversationId: 'main' })
+  const reseeded = open({ systemPrompt: 'S', query: 'lost chat', turnIndex: 6, conversationId: 'main' })
+
+  assert.deepEqual(main1.chat, { label: 'A', startedAtTurn: 1 })
+  assert.equal(main2.chat.label, 'A')
+  assert.deepEqual(sub1.chat, { label: 'B', startedAtTurn: 3, parentLabel: 'A' })
+  assert.equal(sub2.chat.label, 'B')
+  assert.equal(main3.chat.label, 'A', 'the parent goes back to its own chat, not the last one used')
+  assert.equal(reseeded.chat.label, 'C', 'starting over means a new chat')
+})
+
+test('a turn carries its purpose to the panel', () => {
+  const store = new TurnStore()
+  const { wait } = store.open({ query: 'q', turnIndex: 1, conversationId: 'c', purpose: 'compacting' })
+  wait.catch(() => {})
+  assert.equal(store.snapshot().current.purpose, 'compacting')
+})
+
 // ------------------------------------------------------ §3 playwright absent
 
 test('a missing playwright package produces advice, not a stack trace', () => {

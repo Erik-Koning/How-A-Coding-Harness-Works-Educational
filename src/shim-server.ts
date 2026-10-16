@@ -15,6 +15,7 @@ import { createTransport } from './transport/index.js'
 import type { CopilotTransport, TurnRequest } from './transport/types.js'
 import { AbandonedTurnError, ProjectionLostError, TransportUnavailableError } from './transport/types.js'
 import { SessionStore } from './transcript.mjs'
+import type { Session, TurnPlan } from './transcript.mjs'
 import type { OpencodeMessage, ToolSpec } from './protocol.mjs'
 import {
   renderReseedParts,
@@ -24,6 +25,10 @@ import {
   repairPrompt,
   contentToText,
   ProtocolError,
+  classifyToollessRequest,
+  renderTextRequest,
+  renderTextRequestParts,
+  parseTextReply,
 } from './protocol.mjs'
 
 const MAX_REPAIRS = 3
@@ -151,42 +156,89 @@ function serialize<T>(fn: () => Promise<T>): Promise<T> {
   return run
 }
 
+const PURPOSE = {
+  compaction:
+    'opencode is compacting the conversation: it wants a summary of the work so far, which ' +
+    'replaces the older messages. There are no tools on this turn, so the reply is plain text.',
+  other:
+    'opencode wants a written answer with no tools. This is not a step of the task, and the ' +
+    'reply is plain text.',
+}
+
+interface CallerIds {
+  sessionId: string
+  parentSessionId?: string
+}
+
+type RequestBase = Pick<TurnRequest, 'turnIndex' | 'conversationId' | 'parentConversationId' | 'signal'>
+
+/**
+ * A request with no tools is not a step of the task (compaction, usually), so
+ * it neither reads nor advances the Transcript. It goes into the conversation's
+ * live chat when there is one: that chat already holds the history a compaction
+ * asks about, and pasting the whole history again is exactly what compaction
+ * exists to avoid.
+ */
+function planTextOnly(body: ChatBody, session: Session, base: RequestBase): TurnRequest {
+  const kind = classifyToollessRequest(body.messages)
+  const purpose = kind === 'compaction' ? PURPOSE.compaction : PURPOSE.other
+  const inChat = session.projection !== null && session.sent.length > 0
+  log(
+    `turn ${base.turnIndex} [${base.conversationId.slice(0, 12)}] no tools (${kind}), ` +
+      `${inChat ? 'same chat' : 'new chat'}`,
+  )
+  if (!inChat) return { ...base, purpose, ...renderTextRequestParts(body.messages) }
+  return {
+    ...base,
+    purpose,
+    query: renderTextRequest(body.messages),
+    fullContext: renderTextRequestParts(body.messages),
+  }
+}
+
+function planStep(body: ChatBody, session: Session, base: RequestBase): { req: TurnRequest; plan: TurnPlan } {
+  const plan = session.plan(body.messages)
+  log(`turn ${base.turnIndex} [${base.conversationId.slice(0, 12)}] ${plan.action}${plan.reason ? ` (${plan.reason})` : ''}`)
+
+  if (plan.action === 'reseed') {
+    const { systemPrompt, query } = renderReseedParts(body.messages, body.tools ?? [])
+    session.markReseeded({ startedAt: Date.now() })
+    return { plan, req: { ...base, systemPrompt, query } }
+  }
+
+  let query = renderDelta(plan.delta ?? [])
+  if (!query.trim()) {
+    // opencode appended only assistant messages — nothing new to say. Nudge
+    // rather than send an empty payload, and say so, because this shape is
+    // unexpected and worth noticing in a trace.
+    log(`  delta rendered empty (roles: ${(plan.delta ?? []).map((m) => m.role).join(',')}) — nudging`)
+    query = CONTINUE_NUDGE
+  }
+  return { plan, req: { ...base, query, fullContext: renderReseedParts(body.messages, body.tools ?? []) } }
+}
+
 async function runTurn(
   body: ChatBody,
-  sessionId: string,
+  ids: CallerIds,
   out: Sse,
   signal: AbortSignal,
   retried = false,
 ): Promise<void> {
   const seq = ++turnSeq
   const stamp = String(seq).padStart(3, '0')
-  const session = sessions.get(sessionId)
-
-  const plan = session.plan(body.messages)
-  log(`turn ${seq} [${sessionId.slice(0, 12)}] ${plan.action}${plan.reason ? ` (${plan.reason})` : ''}`)
-
-  let req: TurnRequest
-  if (plan.action === 'reseed') {
-    const { systemPrompt, query } = renderReseedParts(body.messages, body.tools ?? [])
-    session.markReseeded({ startedAt: Date.now() })
-    req = { systemPrompt, query, turnIndex: seq, conversationId: sessionId, signal }
-  } else {
-    let query = renderDelta(plan.delta ?? [])
-    if (!query.trim()) {
-      // opencode appended only assistant messages — nothing new to say. Nudge
-      // rather than send an empty payload, and say so, because this shape is
-      // unexpected and worth noticing in a trace.
-      log(`  delta rendered empty (roles: ${(plan.delta ?? []).map((m) => m.role).join(',')}) — nudging`)
-      query = CONTINUE_NUDGE
-    }
-    req = {
-      query,
-      fullContext: renderReseedParts(body.messages, body.tools ?? []),
-      turnIndex: seq,
-      conversationId: sessionId,
-      signal,
-    }
+  const session = sessions.get(ids.sessionId)
+  const base: RequestBase = {
+    turnIndex: seq,
+    conversationId: ids.sessionId,
+    parentConversationId: ids.parentSessionId,
+    signal,
   }
+
+  const textOnly = !body.tools || body.tools.length === 0
+  const { req, plan } = textOnly
+    ? { req: planTextOnly(body, session, base), plan: null }
+    : planStep(body, session, base)
+  const parse = textOnly ? parseTextReply : parseReply
 
   trace(`${stamp}-outbound.txt`, [req.systemPrompt, req.query].filter(Boolean).join('\n\n'))
 
@@ -209,7 +261,7 @@ async function runTurn(
       if (e instanceof ProjectionLostError && !retried) {
         log(`  ${e.message} — re-seeding`)
         session.invalidate()
-        return runTurn(body, sessionId, out, signal, true)
+        return runTurn(body, ids, out, signal, true)
       }
       throw e
     }
@@ -218,7 +270,7 @@ async function runTurn(
     trace(`${stamp}-reply-${attempt}.txt`, reply)
 
     try {
-      parsed = parseReply(reply)
+      parsed = parse(reply)
       break
     } catch (e) {
       if (!(e instanceof ProtocolError)) throw e
@@ -234,12 +286,12 @@ async function runTurn(
       log(`  repair ${attempt}/${MAX_REPAIRS} (${e.kind})`)
       // A repair is just another turn: same transport, no special casing. In
       // manual mode it surfaces in the panel as the next thing to copy.
-      current = { query: repairPrompt(e.kind), turnIndex: seq, conversationId: sessionId, signal }
+      current = { ...base, purpose: req.purpose, query: repairPrompt(e.kind) }
     }
   }
 
-  session.commit(plan.incoming)
-  trace(`${stamp}-parsed.json`, { plan: plan.action, attempts: attempt, parsed })
+  if (plan) session.commit(plan.incoming)
+  trace(`${stamp}-parsed.json`, { plan: plan?.action ?? 'no-tools', attempts: attempt, parsed })
 
   const usage = estimateUsage(body.messages, reply)
   if (parsed!.type === 'tool_call') {
@@ -293,12 +345,16 @@ async function main(): Promise<void> {
         if (!res.writableEnded) ac.abort()
       })
 
-      // A call with no tools is housekeeping (title generation). It is cosmetic
-      // and must never cost a transport round trip — in manual mode that would
-      // mean asking a human to relay a throwaway string.
-      if (!body.tools || body.tools.length === 0) {
+      // A title is cosmetic and must never cost a transport round trip — in
+      // manual mode that would mean asking a human to relay a throwaway string.
+      // Other calls without tools (compaction) fall through and are relayed:
+      // opencode keeps their answer in place of the conversation history.
+      const toolless = !body.tools || body.tools.length === 0
+      if (toolless && classifyToollessRequest(body.messages ?? []) === 'title') {
         const lastUser = [...(body.messages ?? [])].reverse().find((m) => m.role === 'user')
         const title = contentToText(lastUser?.content ?? 'Session')
+          // the task-name request puts its instruction on the first line
+          .replace(/^Generate [^\n]*:\n/, '')
           .replace(/^["']|["']$/g, '')
           .split('\n')[0]
           .slice(0, 50)
@@ -307,7 +363,11 @@ async function main(): Promise<void> {
         return
       }
 
-      const sessionId = (req.headers['x-session-id'] as string) ?? 'default'
+      const ids: CallerIds = {
+        sessionId: (req.headers['x-session-id'] as string) ?? 'default',
+        // opencode sends this for a subagent's requests (the task tool)
+        parentSessionId: req.headers['x-parent-session-id'] as string | undefined,
+      }
 
       // Surface the panel NOW, before queueing. A request that waits behind an
       // unanswered turn would otherwise produce no visible sign at all.
@@ -321,7 +381,7 @@ async function main(): Promise<void> {
       queueDepth++
 
       try {
-        await serialize(() => runTurn(body, sessionId, out, ac.signal))
+        await serialize(() => runTurn(body, ids, out, ac.signal))
       } catch (e) {
         if (e instanceof AbandonedTurnError) {
           log(e.message)

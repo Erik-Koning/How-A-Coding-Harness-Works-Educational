@@ -18,6 +18,9 @@ function Row({ turn }: { turn: TurnRecord }) {
         className="flex w-full items-center gap-3 px-4 py-1.5 text-left text-xs hover:bg-panel-2"
       >
         <span className="font-mono text-ink-faint">{String(turn.turnIndex).padStart(2, '0')}</span>
+        <span className="shrink-0 font-mono text-ink-faint" title={`Copilot chat ${turn.chat.label}`}>
+          {turn.chat.label}
+        </span>
         <span className="min-w-0 flex-1 truncate text-ink-dim">
           {turn.query.replace(/\s+/g, ' ').slice(0, 90)}
         </span>

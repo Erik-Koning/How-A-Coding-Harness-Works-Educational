@@ -5,6 +5,7 @@ import { InboundColumn } from './components/InboundColumn'
 import { HistoryRail } from './components/HistoryRail'
 import { EmptyState } from './components/EmptyState'
 import { buildSessionMarkdown, downloadText } from './lib/export'
+import { useTurnAlerts } from './lib/alerts'
 
 async function post(path: string, body: unknown): Promise<void> {
   await fetch(path, {
@@ -17,6 +18,7 @@ async function post(path: string, body: unknown): Promise<void> {
 export default function App() {
   const [snapshot, setSnapshot] = useState<PanelSnapshot>({ current: null, history: [] })
   const [connected, setConnected] = useState(false)
+  const [loaded, setLoaded] = useState(false)
   const [draft, setDraft] = useState('')
   const lastTurnId = useRef<string | null>(null)
 
@@ -27,6 +29,7 @@ export default function App() {
     es.onmessage = (e) => {
       const next = JSON.parse(e.data) as PanelSnapshot
       setSnapshot(next)
+      setLoaded(true)
       // Clear the textarea only when a genuinely new turn arrives, never on a
       // re-render — losing typed text would be unforgivable here.
       const id = next.current?.id ?? null
@@ -39,9 +42,13 @@ export default function App() {
   }, [])
 
   const turn = snapshot.current
+  // The turn before this one, to tell whether this paste goes somewhere else.
+  const turnPos = turn ? snapshot.history.findIndex((t) => t.id === turn.id) : -1
+  const previous = turnPos > 0 ? snapshot.history[turnPos - 1] : undefined
 
-  // The tab title is the one signal that survives the panel being a background
-  // tab on another desktop. No sound, no popup — just an unmistakable marker.
+  // The tab title survives the panel being a background tab on another desktop.
+  // The chime and the notification are for when nobody is looking at that tab.
+  const alerts = useTurnAlerts(turn, loaded)
   useEffect(() => {
     document.title = turn ? `● Turn ${turn.turnIndex} waiting — Copilot bridge` : 'Copilot bridge'
   }, [turn?.id, turn?.turnIndex])
@@ -70,6 +77,27 @@ export default function App() {
           </span>
         </div>
         <div className="flex items-center gap-3 text-xs text-ink-dim">
+          {alerts.enabled && alerts.permission === 'default' && (
+            <button
+              onClick={alerts.requestPermission}
+              title="Let the panel show a desktop notification when a turn arrives while you are in another tab or app."
+              className="text-[11px] underline decoration-dotted underline-offset-2 hover:text-ink"
+            >
+              Allow notifications
+            </button>
+          )}
+          <button
+            onClick={alerts.toggle}
+            aria-pressed={alerts.enabled}
+            title={
+              alerts.enabled
+                ? 'A chime, plus a desktop notification when this tab is not in front, each time a turn arrives. Click to turn off.'
+                : 'Click to play a chime and show a notification each time a turn arrives.'
+            }
+            className="rounded border border-hairline px-2 py-1 text-[11px] hover:text-ink"
+          >
+            {alerts.enabled ? 'Alerts on' : 'Alerts off'}
+          </button>
           {snapshot.history.length > 0 && (
             <button
               onClick={() =>
@@ -99,6 +127,7 @@ export default function App() {
           <>
             <OutboundColumn
               turn={turn}
+              previous={previous}
               onCopied={() => onCopied(turn)}
               onLostChat={() => onLostChat(turn)}
             />

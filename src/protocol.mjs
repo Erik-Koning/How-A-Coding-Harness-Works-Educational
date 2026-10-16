@@ -304,6 +304,13 @@ export function contentToText(content) {
 export function renderReseedParts(messages, tools) {
   const system = contentToText(messages.find((m) => m.role === 'system')?.content ?? '')
   const systemPrompt = renderPreamble(system, tools)
+  const parts = renderHistory(messages)
+  parts.push(REQUEST_DIRECTIVE)
+  return { systemPrompt, query: parts.join('\n\n') }
+}
+
+/** Every non-system message as a replayable section, oldest first. */
+function renderHistory(messages) {
   const parts = []
 
   // tool results carry only tool_call_id; recover the name from the call
@@ -332,9 +339,7 @@ export function renderReseedParts(messages, tools) {
       parts.push(renderToolResult(nameById.get(m.tool_call_id) ?? 'tool', contentToText(m.content)))
     }
   }
-
-  parts.push(REQUEST_DIRECTIVE)
-  return { systemPrompt, query: parts.join('\n\n') }
+  return parts
 }
 
 /** The single-blob form, unchanged, for the composer path. */
@@ -373,12 +378,146 @@ export function renderDelta(delta) {
 export const CONTINUE_NUDGE =
   'Continue. Reply with exactly one fenced json block as specified.'
 
+// ------------------------------------------------------- tool-less requests
+
+/**
+ * What a request with no tools is for.
+ *
+ * opencode makes several model calls with an empty tool set (verified in the
+ * 1.18.4 binary: `tools:{}`, and no placeholder tool for a custom provider):
+ *
+ *  - 'title'      session titles and short task names. Cosmetic; answered locally.
+ *  - 'compaction' "summarise the history so far", sent when the session nears the
+ *                 context limit or on /compact. opencode REPLACES the older
+ *                 history with the answer, so a made-up reply silently erases
+ *                 the conversation. It must reach the model.
+ *  - 'other'      anything else. Relayed, because guessing an answer is worse
+ *                 than asking for one.
+ *
+ * Only the system prompt and the request itself are inspected, never the
+ * history, so a user who happens to type "generate a title" mid-task does not
+ * turn a compaction into a title.
+ */
+const TITLE_RE = /You are a title generator|^Generate a title for this conversation|^Generate a short 2-3 word name/
+const COMPACTION_RE = /context summarization assistant|anchored summary/i
+
+export function classifyToollessRequest(messages) {
+  const system = contentToText(messages.find((m) => m.role === 'system')?.content ?? '')
+  const users = messages.filter((m) => m.role === 'user')
+  const first = contentToText(users[0]?.content ?? '')
+  const last = contentToText(users.at(-1)?.content ?? '')
+  if (TITLE_RE.test(system) || TITLE_RE.test(first)) return 'title'
+  if (COMPACTION_RE.test(system) || COMPACTION_RE.test(last)) return 'compaction'
+  return 'other'
+}
+
+/**
+ * The closing instruction for a tool-less request.
+ *
+ * Plain text, not the JSON envelope: these answers are long Markdown (a
+ * compaction summary has sections and bullets), and asking for that inside a
+ * JSON string invites broken escapes. parseTextReply accepts the envelope too,
+ * in case the chat sticks to the format it was taught.
+ */
+export const TEXT_ONLY_DIRECTIVE = [
+  '---',
+  '',
+  '# Now do this',
+  '',
+  'This request is different from the others. It has no tools, and the program wants a written',
+  'answer, not a tool call. Do not try to run anything.',
+  '',
+  'Reply with your answer as plain text (Markdown is fine). No JSON block this time, and no',
+  'commentary about the request.',
+].join('\n')
+
+const TEXT_ONLY_PREAMBLE = [
+  '# How you must reply',
+  '',
+  'You are helping a command-line coding agent. A program sends you its requests and reads your',
+  'reply. This request needs a written answer only: there are no tools, and you cannot run anything.',
+].join('\n')
+
+function splitTextRequest(messages) {
+  const system = contentToText(messages.find((m) => m.role === 'system')?.content ?? '').trim()
+  let lastUser = -1
+  messages.forEach((m, i) => {
+    if (m.role === 'user') lastUser = i
+  })
+  return {
+    system,
+    history: lastUser === -1 ? messages : messages.slice(0, lastUser),
+    request: lastUser === -1 ? '' : contentToText(messages[lastUser].content),
+  }
+}
+
+/**
+ * A tool-less request pasted into the chat that already holds the conversation.
+ *
+ * Only the instruction is sent: the chat has the history. That is what makes
+ * compaction affordable at all, since it fires precisely when the history has
+ * grown too large to paste again.
+ */
+export function renderTextRequest(messages) {
+  const { system, request } = splitTextRequest(messages)
+  return [
+    '## A request from the program',
+    ...(system ? ['', system] : []),
+    '',
+    request,
+    '',
+    TEXT_ONLY_DIRECTIVE,
+  ].join('\n')
+}
+
+/** The same request for a brand-new chat, which needs the history replayed. */
+export function renderTextRequestParts(messages) {
+  const { system, history, request } = splitTextRequest(messages)
+  const systemPrompt = system
+    ? `${TEXT_ONLY_PREAMBLE}\n\n# Instructions from the program\n\n${system}`
+    : TEXT_ONLY_PREAMBLE
+  const parts = renderHistory(history)
+  parts.push(`## The request\n\n${request}`, TEXT_ONLY_DIRECTIVE)
+  return { systemPrompt, query: parts.join('\n\n') }
+}
+
+/**
+ * Read the answer to a tool-less request.
+ *
+ * The whole reply is the answer, unless it is nothing but one JSON envelope: a
+ * final is unwrapped, and a tool_call is refused, because there are no tools to
+ * run it with. An envelope merely QUOTED inside a longer answer (a summary that
+ * mentions a tool call it made) is left alone.
+ */
+export function parseTextReply(text) {
+  if (QUOTA_RE.test(text)) {
+    throw new ProtocolError('Copilot daily quota exhausted', 'quota', text)
+  }
+  const trimmed = String(text).trim()
+  if (!trimmed) throw new ProtocolError('empty reply', 'empty', text)
+
+  const bare = trimmed.replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, '$1').trim()
+  if (bare.startsWith('{') && bare.endsWith('}')) {
+    let obj = null
+    try {
+      obj = JSON.parse(bare)
+    } catch {
+      // not an envelope; the text is the answer
+    }
+    if (obj?.type === 'final') return { type: 'final', content: String(obj.content ?? '') }
+    if (obj?.type === 'tool_call') {
+      throw new ProtocolError('tool_call on a request with no tools', 'no-tools', text)
+    }
+  }
+  return { type: 'final', content: trimmed }
+}
+
 // ------------------------------------------------------------------ parsing
 
 export class ProtocolError extends Error {
   constructor(message, kind, raw) {
     super(message)
-    this.kind = kind // 'no-block' | 'bad-json' | 'bad-shape' | 'quota'
+    this.kind = kind // 'no-block' | 'bad-json' | 'bad-shape' | 'quota' | 'no-tools' | 'empty'
     this.raw = raw
   }
 }
@@ -460,6 +599,10 @@ export function repairPrompt(kind) {
       return 'Your reply had no fenced json block. Resend the SAME answer as exactly one ```json block, nothing else.'
     case 'bad-json':
       return 'That block was not valid JSON. Resend it as exactly one ```json block containing valid JSON, nothing else.'
+    case 'no-tools':
+      return 'There are no tools for this request, so a tool call cannot run. Answer it directly instead, as plain text.'
+    case 'empty':
+      return 'Your reply was empty. Answer the request above as plain text.'
     default:
       return 'Wrong shape. Resend as exactly one ```json block containing {"type":"tool_call","name":...,"arguments":{...}} or {"type":"final","content":...}, nothing else.'
   }

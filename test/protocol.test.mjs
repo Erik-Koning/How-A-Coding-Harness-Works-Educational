@@ -4,6 +4,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseReply, ProtocolError, renderPreamble, renderTools, renderDelta, renderReseedParts, CONTINUE_NUDGE, selectSystemGuidance } from '../src/protocol.mjs'
+import {
+  classifyToollessRequest,
+  renderTextRequest,
+  renderTextRequestParts,
+  parseTextReply,
+  TEXT_ONLY_DIRECTIVE,
+  PROTOCOL_RULES,
+} from '../src/protocol.mjs'
 
 test('parses a well-formed tool call', () => {
   const r = parseReply('```json\n{"type":"tool_call","name":"bash","arguments":{"command":"ls"}}\n```')
@@ -234,3 +242,119 @@ test('an empty or missing system prompt is handled', () => {
   assert.equal(selectSystemGuidance(''), '')
   assert.equal(selectSystemGuidance(undefined), '')
 })
+
+// ------------------------------------------------ requests that carry no tools
+
+// Shapes taken from the opencode 1.18.4 binary: the title, task-name and
+// compaction calls all pass `tools: {}`.
+const TITLE_SYSTEM = 'You are a title generator. You output ONLY a thread title. Nothing else.'
+const COMPACTION_SYSTEM =
+  'You are an anchored context summarization assistant for coding sessions.\nSummarize only the conversation history you are given.'
+const COMPACTION_PROMPT = 'Create a new anchored summary from the conversation history.\n## Goal\n...'
+
+const compactionRequest = (history) => [
+  { role: 'system', content: COMPACTION_SYSTEM },
+  ...history,
+  { role: 'user', content: COMPACTION_PROMPT },
+]
+
+test('a title request is recognised by its system prompt or its opening line', () => {
+  assert.equal(
+    classifyToollessRequest([
+      { role: 'system', content: TITLE_SYSTEM },
+      { role: 'user', content: 'Generate a title for this conversation:\n' },
+      { role: 'user', content: 'how many lines in foo.js' },
+    ]),
+    'title',
+  )
+  assert.equal(
+    classifyToollessRequest([{ role: 'user', content: 'Generate a title for this conversation:\n' }]),
+    'title',
+  )
+  assert.equal(
+    classifyToollessRequest([
+      { role: 'user', content: 'Generate a short 2-3 word name that describes this task:\nfix login' },
+    ]),
+    'title',
+  )
+})
+
+test('REGRESSION: a compaction request is not mistaken for a title', () => {
+  // It used to be answered locally with the first line of the last user
+  // message, and opencode replaced the conversation history with that line.
+  assert.equal(classifyToollessRequest(compactionRequest([{ role: 'user', content: 'fix the bug' }])), 'compaction')
+  // recognisable from the request alone, too
+  assert.equal(classifyToollessRequest([{ role: 'user', content: COMPACTION_PROMPT }]), 'compaction')
+})
+
+test('title wording inside the history does not turn a compaction into a title', () => {
+  const messages = compactionRequest([
+    { role: 'user', content: 'refactor the parser' },
+    { role: 'assistant', content: 'done' },
+    { role: 'user', content: 'Generate a title for this conversation: also, You are a title generator' },
+  ])
+  assert.equal(classifyToollessRequest(messages), 'compaction')
+})
+
+test('an unknown request with no tools is neither a title nor a compaction', () => {
+  assert.equal(classifyToollessRequest([{ role: 'user', content: 'Summarise the diff' }]), 'other')
+})
+
+test('in the existing chat, only the instruction is sent, not the history again', () => {
+  const messages = compactionRequest([
+    { role: 'user', content: 'THE ORIGINAL TASK' },
+    { role: 'assistant', content: 'THE EARLIER ANSWER' },
+  ])
+  const q = renderTextRequest(messages)
+  assert.match(q, /anchored context summarization assistant/)
+  assert.match(q, /Create a new anchored summary/)
+  assert.ok(q.endsWith(TEXT_ONLY_DIRECTIVE), 'the plain-text directive comes last')
+  assert.ok(!q.includes('THE ORIGINAL TASK'), 'the chat already has the history')
+  assert.ok(!q.includes('THE EARLIER ANSWER'))
+})
+
+test('in a new chat, the history is replayed and the request comes last', () => {
+  const messages = compactionRequest([
+    { role: 'user', content: 'THE ORIGINAL TASK' },
+    { role: 'assistant', content: 'THE EARLIER ANSWER' },
+  ])
+  const { systemPrompt, query } = renderTextRequestParts(messages)
+  assert.match(systemPrompt, /anchored context summarization assistant/)
+  assert.ok(!systemPrompt.includes(PROTOCOL_RULES), 'no tool-call contract when there are no tools')
+  assert.ok(query.indexOf('THE ORIGINAL TASK') < query.indexOf('THE EARLIER ANSWER'))
+  assert.ok(query.indexOf('THE EARLIER ANSWER') < query.indexOf('Create a new anchored summary'))
+  assert.ok(query.endsWith(TEXT_ONLY_DIRECTIVE))
+})
+
+test('a plain-text answer is taken whole', () => {
+  const summary = '## Goal\n- fix the parser\n\n## Files\n- src/parse.ts'
+  assert.deepEqual(parseTextReply(`\n${summary}\n`), { type: 'final', content: summary })
+})
+
+test('a reply that is only a final envelope is unwrapped', () => {
+  assert.deepEqual(parseTextReply('```json\n{"type":"final","content":"the summary"}\n```'), {
+    type: 'final',
+    content: 'the summary',
+  })
+})
+
+test('a tool call is refused when there are no tools to run it', () => {
+  assert.throws(
+    () => parseTextReply('{"type":"tool_call","name":"bash","arguments":{"command":"ls"}}'),
+    (e) => e instanceof ProtocolError && e.kind === 'no-tools',
+  )
+})
+
+test('a summary that quotes a tool call is still a summary', () => {
+  const summary = 'We ran:\n```json\n{"type":"tool_call","name":"bash","arguments":{"command":"ls"}}\n```\nand it listed 3 files.'
+  assert.equal(parseTextReply(summary).content, summary)
+})
+
+test('an empty answer and the quota notice are refused', () => {
+  assert.throws(() => parseTextReply('   '), (e) => e.kind === 'empty')
+  assert.throws(
+    () => parseTextReply("You've reached your daily chat limit. Check back tomorrow."),
+    (e) => e.kind === 'quota',
+  )
+})
+

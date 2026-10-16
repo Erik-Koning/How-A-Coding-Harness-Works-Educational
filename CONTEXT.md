@@ -33,10 +33,18 @@ repair re-ask) without opencode being aware of more than one.
 
 ## Side Call
 
-A model call opencode makes for housekeeping rather than for the agentic loop — observed:
-**title generation**. Recognisable on the wire by carrying **no `tools` array**, which makes it
-cheap and reliable to detect. A Side Call's output is cosmetic and need not reach the browser at
-all. Contrast with a **Main Call**, which always carries the full tool set and drives the loop.
+A model call opencode makes for housekeeping rather than for the agentic loop. Recognisable on
+the wire by carrying **no `tools` array**. Two kinds are observed, and they must be treated
+differently:
+
+- **Title generation** (and short task names). Cosmetic: the Shim answers it locally and it never
+  reaches the browser.
+- **Compaction.** A request to summarise the history so far, sent near the context limit or on
+  `/compact`. opencode replaces the older messages with the answer, so a made-up reply erases the
+  conversation. It is relayed like a Turn, into the conversation's live chat, and answered in plain
+  text.
+
+Contrast with a **Main Call**, which always carries the full tool set and drives the loop.
 
 ## Preamble
 

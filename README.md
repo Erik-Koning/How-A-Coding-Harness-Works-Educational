@@ -34,9 +34,12 @@ the model's tool calls, the tool results, and the final answer, one step at a ti
   then the answer.
 - **The system prompt.** You will see what opencode tells the model about how to behave: its tool
   usage policy, how to do tasks, code conventions and so on.
-- **Housekeeping calls.** Not every model call is part of the loop. opencode also asks the model to
-  generate a session title. Those requests carry no tools, which is how the shim spots them and
-  answers them itself.
+- **Housekeeping calls.** Not every model call is part of the loop. opencode also asks the model
+  for a session title and, when a conversation gets long, for a summary that replaces the older
+  messages (compaction). Both requests carry no tools. The shim answers the title itself, but
+  passes the summary request to you, because opencode keeps that answer in place of the history.
+- **Subagents.** When the model calls the `task` tool, opencode starts a subagent with its own
+  conversation. The panel gives it its own chat and tells you when to switch back.
 - **State lives in the harness.** The API is stateless, so opencode resends the whole conversation
   on every turn. The shim keeps its own transcript and only gives you the *new* part to paste,
   because your chat window already remembers the rest.

@@ -9,13 +9,17 @@ function CopyBlock({
   label,
   text,
   onCopied,
+  highlight = false,
 }: {
   label: string
   text: string
   onCopied: () => void
+  /** The next thing to press: drawn in the accent until the turn is copied. */
+  highlight?: boolean
 }) {
   const [state, setState] = useState<CopyState>('idle')
   const ref = useRef<HTMLPreElement>(null)
+  const cue = highlight && state === 'idle'
 
   async function copy() {
     // Writing to the clipboard on an explicit click is the human performing the
@@ -54,7 +58,9 @@ function CopyBlock({
           className={`rounded border px-2.5 py-1 text-xs transition-colors ${
             state === 'failed'
               ? 'border-amber-500/60 text-amber-400'
-              : 'border-hairline bg-panel-2 text-ink hover:border-accent-dim hover:text-accent'
+              : cue
+                ? 'copy-cue'
+                : 'border-hairline bg-panel-2 text-ink hover:border-accent-dim hover:text-accent'
           }`}
         >
           {state === 'copied'
@@ -67,6 +73,8 @@ function CopyBlock({
       <pre
         ref={ref}
         tabIndex={0}
+        // Copying by hand (select, then ⌘C) counts too, so the cue clears.
+        onCopy={onCopied}
         onKeyDown={(e) => {
           // Cmd/Ctrl+C on the focused block copies the whole block, so the
           // keyboard path matches the button exactly.
@@ -86,8 +94,17 @@ function CopyBlock({
   )
 }
 
-function CopyBothButton({ text, onCopied }: { text: string; onCopied: () => void }) {
+function CopyBothButton({
+  text,
+  onCopied,
+  highlight,
+}: {
+  text: string
+  onCopied: () => void
+  highlight: boolean
+}) {
   const [state, setState] = useState<CopyState>('idle')
+  const cue = highlight && state === 'idle'
 
   async function copy() {
     const ok = await copyText(text)
@@ -102,7 +119,9 @@ function CopyBothButton({ text, onCopied }: { text: string; onCopied: () => void
       className={`w-full rounded border py-2 text-xs font-medium transition-colors ${
         state === 'failed'
           ? 'border-amber-500/60 text-amber-400'
-          : 'border-accent-dim bg-accent-dim/20 text-accent hover:bg-accent-dim/30'
+          : cue
+            ? 'copy-cue'
+            : 'border-accent-dim bg-accent-dim/20 text-accent hover:bg-accent-dim/30'
       }`}
     >
       {state === 'copied'
@@ -162,17 +181,69 @@ function FullContextRow({
   )
 }
 
+/**
+ * Where this paste goes. The banner is the delta model made visible: it is the
+ * only thing telling the human whether this belongs in a new chat or an
+ * existing one, and which existing one. "The same chat as the previous turn" is
+ * wrong after a subagent: the subagent had its own chat, and its parent's next
+ * turn goes back to the parent's.
+ */
+function Banner({ turn, previous }: { turn: TurnRecord; previous?: TurnRecord }) {
+  const { label, startedAtTurn, parentLabel } = turn.chat
+  const isNewChat = !!turn.systemPrompt
+  const switched = !isNewChat && previous !== undefined && previous.chat.label !== label
+
+  const tone = isNewChat
+    ? 'border-accent-dim bg-accent-dim/15 text-accent'
+    : switched
+      ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+      : 'border-hairline text-ink-dim'
+
+  return (
+    <div className={`shrink-0 space-y-1 border-b px-4 py-2 text-xs ${tone}`}>
+      <p>
+        {isNewChat ? (
+          <>
+            Start a new Copilot chat and paste this. It carries the system prompt. This is{' '}
+            <strong>chat {label}</strong>.
+          </>
+        ) : switched ? (
+          <>
+            Switch chats: paste into <strong>chat {label}</strong>, the one you started at turn{' '}
+            {startedAtTurn}. The previous turn went to chat {previous.chat.label}.
+          </>
+        ) : (
+          <>
+            Paste into the same Copilot chat as the previous turn (<strong>chat {label}</strong>).
+          </>
+        )}
+      </p>
+      {isNewChat && parentLabel && (
+        <p>
+          It is for a subagent that chat {parentLabel} started. Keep chat {parentLabel} open:
+          opencode goes back to it when the subagent finishes.
+        </p>
+      )}
+      {turn.purpose && <p className="text-ink-dim">{turn.purpose}</p>}
+    </div>
+  )
+}
+
 export function OutboundColumn({
   turn,
+  previous,
   onCopied,
   onLostChat,
 }: {
   turn: TurnRecord
+  previous?: TurnRecord
   onCopied: () => void
   onLostChat: () => void
 }) {
   const isNewChat = !!turn.systemPrompt
   const both = isNewChat ? `${turn.systemPrompt}\n\n${turn.query}` : turn.query
+  // A turn nobody has copied yet: the primary copy button is the next step.
+  const cue = turn.state === 'pending_copy'
 
   function download() {
     downloadText(`turn-${turn.turnIndex}.md`, both)
@@ -182,7 +253,7 @@ export function OutboundColumn({
     <div className="flex min-w-0 flex-1 flex-col border-r border-hairline">
       <div className="flex shrink-0 items-center justify-between border-b border-hairline px-4 py-2.5">
         <h2 className="text-xs font-semibold tracking-tight uppercase text-ink-dim">
-          Outbound · turn {turn.turnIndex}
+          Outbound · turn {turn.turnIndex} · chat {turn.chat.label}
         </h2>
         <div className="flex items-center gap-2">
           <button
@@ -202,19 +273,7 @@ export function OutboundColumn({
         </div>
       </div>
 
-      {/* The banner is the delta model made visible: it is the only thing telling
-          the human whether this paste belongs in a new chat or the existing one. */}
-      <div
-        className={`shrink-0 border-b px-4 py-2 text-xs ${
-          isNewChat
-            ? 'border-accent-dim bg-accent-dim/15 text-accent'
-            : 'border-hairline text-ink-dim'
-        }`}
-      >
-        {isNewChat
-          ? 'Start a new Copilot chat and paste this. It carries the system prompt.'
-          : 'Paste into the same Copilot chat as the previous turn.'}
-      </div>
+      <Banner turn={turn} previous={previous} />
 
       <div className="flex min-h-0 flex-1 flex-col">
         {isNewChat ? (
@@ -222,12 +281,12 @@ export function OutboundColumn({
             <CopyBlock label="System prompt" text={turn.systemPrompt!} onCopied={onCopied} />
             <CopyBlock label="Query" text={turn.query} onCopied={onCopied} />
             <div className="shrink-0 px-4 pb-3">
-              <CopyBothButton text={both} onCopied={onCopied} />
+              <CopyBothButton text={both} onCopied={onCopied} highlight={cue} />
             </div>
           </>
         ) : (
           <>
-            <CopyBlock label="Prompt" text={turn.query} onCopied={onCopied} />
+            <CopyBlock label="Prompt" text={turn.query} onCopied={onCopied} highlight={cue} />
             {turn.fullContext && (
               <FullContextRow
                 text={`${turn.fullContext.systemPrompt}\n\n${turn.fullContext.query}`}

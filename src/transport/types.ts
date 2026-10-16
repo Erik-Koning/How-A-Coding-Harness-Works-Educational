@@ -18,6 +18,17 @@ export interface TurnRequest {
   turnIndex: number
   conversationId: string
   /**
+   * Set when this conversation is a subagent's (opencode's `task` tool): the
+   * conversation that started it. A subagent runs in its own chat, and the
+   * parent's next turn must go back to the parent's chat, not the last one used.
+   */
+  parentConversationId?: string
+  /**
+   * Set when the turn is not a step of the task, saying what it is instead (for
+   * example a compaction summary). Shown to the human; never sent to Copilot.
+   */
+  purpose?: string
+  /**
    * Aborted when the opencode client that asked for this turn goes away —
    * quitting the TUI, Ctrl-C, a dropped connection.
    *

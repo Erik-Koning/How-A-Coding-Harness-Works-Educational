@@ -10,10 +10,30 @@ import type { TurnRequest } from '../transport/types.js'
 
 export type TurnState = 'pending_copy' | 'awaiting_response' | 'in_review' | 'committed'
 
+/**
+ * The Copilot chat a turn must be pasted into, as the human knows it.
+ *
+ * Every turn that carries a system prompt asks the human to start a new chat,
+ * and gets a new label. Turns without one belong to their conversation's
+ * latest chat. Without labels the panel could only say "the same chat as the
+ * previous turn", which is wrong as soon as a subagent has its own chat.
+ */
+export interface ChatInfo {
+  /** "A", "B", … in the order the human was asked to start them. */
+  label: string
+  /** The turn whose paste started this chat. */
+  startedAtTurn: number
+  /** For a subagent's chat: the label of the chat that started the subagent. */
+  parentLabel?: string
+}
+
 export interface TurnRecord {
   id: string
   turnIndex: number
   conversationId: string
+  chat: ChatInfo
+  /** Why this turn exists, when it is not a step of the task. */
+  purpose?: string
   systemPrompt?: string
   query: string
   /** Delta turns only: everything so far, for pasting into a brand-new chat. */
@@ -39,6 +59,12 @@ type Resolver = {
 
 let seq = 0
 
+/** A, B, … Z, then A2, B2, … */
+function chatLabel(n: number): string {
+  const letter = String.fromCharCode(65 + (n % 26))
+  return n < 26 ? letter : `${letter}${Math.floor(n / 26) + 1}`
+}
+
 function withoutFullContext(t: TurnRecord): TurnRecord {
   if (!t.fullContext) return t
   const copy = { ...t }
@@ -50,6 +76,9 @@ export class TurnStore extends EventEmitter {
   private turns = new Map<string, TurnRecord>()
   private order: string[] = []
   private waiters = new Map<string, Resolver>()
+  /** Each conversation's current chat. */
+  private chats = new Map<string, ChatInfo>()
+  private chatCount = 0
 
   /**
    * Register a turn and return the promise the transport hands back.
@@ -63,6 +92,8 @@ export class TurnStore extends EventEmitter {
       id,
       turnIndex: req.turnIndex,
       conversationId: req.conversationId,
+      chat: this.chatFor(req),
+      purpose: req.purpose,
       systemPrompt: req.systemPrompt,
       query: req.query,
       fullContext: req.fullContext,
@@ -82,6 +113,16 @@ export class TurnStore extends EventEmitter {
 
   get(id: string): TurnRecord | undefined {
     return this.turns.get(id)
+  }
+
+  private chatFor(req: TurnRequest): ChatInfo {
+    const existing = this.chats.get(req.conversationId)
+    if (existing && req.systemPrompt === undefined) return existing
+    const chat: ChatInfo = { label: chatLabel(this.chatCount++), startedAtTurn: req.turnIndex }
+    const parent = req.parentConversationId && this.chats.get(req.parentConversationId)
+    if (parent) chat.parentLabel = parent.label
+    this.chats.set(req.conversationId, chat)
+    return chat
   }
 
   /** The turn the panel should be showing: the oldest not-yet-committed one. */

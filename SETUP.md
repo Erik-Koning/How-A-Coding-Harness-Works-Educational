@@ -173,13 +173,24 @@ answer.
 
 ## 6. Relay each turn
 
-The panel opens in your browser on the first turn. While a turn is waiting, the tab title shows
-**● Turn N waiting**. The left side is what goes **out** to your chat window; the right side is
-what comes back **in**.
+The panel opens in your browser on the first turn. The left side is what goes **out** to your chat
+window; the right side is what comes back **in**.
+
+The panel tells you when a new turn arrives:
+
+- The copy button to press next is filled in blue until you copy the turn.
+- The tab title shows **● Turn N waiting**.
+- It plays a chime. If you click **Allow notifications** in the header, it also shows a desktop
+  notification while you are in another tab or app. **Alerts on** in the header switches both off.
+  Browsers only play sound after you have clicked somewhere in the panel once.
+
+Each Copilot chat you are asked to start gets a letter: chat A, chat B and so on. The banner at the
+top of each turn says which chat it goes in.
 
 ### The first turn: a new chat
 
-The banner reads **"Start a new Copilot chat and paste this. It carries the system prompt."**
+The banner reads **"Start a new Copilot chat and paste this. It carries the system prompt. This is
+chat A."**
 
 1. Start a **new** chat in Copilot.
 2. In the panel, click **Copy both**. This copies the system prompt and the query together.
@@ -195,8 +206,8 @@ next turn.
 
 ### Later turns: the same chat
 
-The banner reads **"Paste into the same Copilot chat as the previous turn."** The panel now shows
-only what is new: usually the tool's output and a reminder of the reply format.
+The banner reads **"Paste into the same Copilot chat as the previous turn (chat A)."** The panel
+now shows only what is new: usually the tool's output and a reminder of the reply format.
 
 1. Click **Copy prompt**.
 2. Paste into the **same** Copilot chat and send.
@@ -204,6 +215,22 @@ only what is new: usually the tool's output and a reminder of the reply format.
 
 Repeat until Copilot replies with a final answer (`{"type":"final", ...}`). opencode prints it and
 the task is done.
+
+### Subagents: a second chat
+
+If the model calls the `task` tool, opencode starts a subagent with its own conversation. Its first
+turn asks you to start a new chat (chat B), and says which chat started it. Keep chat A open.
+
+When the subagent finishes, opencode goes back to the first conversation. That turn's banner turns
+amber: **"Switch chats: paste into chat A, the one you started at turn 1."** Paste it there, not
+into chat B.
+
+### Compaction: a summary in plain text
+
+When a conversation gets long, or you type `/compact` in opencode, opencode asks for a summary of
+the work so far and replaces the older messages with it. The banner says so. This turn has no tools,
+so the reply is ordinary text, not a JSON block. Paste it into the chat the banner names, then paste
+Copilot's whole answer back as usual.
 
 ### What a good reply looks like
 
@@ -268,7 +295,8 @@ prompt is cut to its most relevant sections to fit within about 12,000 character
 | --- | --- |
 | `The operator panel has not been built` | Run `npm run build:panel`, then `npm start` again. |
 | `EADDRINUSE` on start | Another process is using the port. Stop it, or set `COPILOT_SHIM_PORT` / `COPILOT_PANEL_PORT`. |
-| opencode seems to hang | It is waiting for you. Check the panel. The shim terminal says `awaiting a human`, or `queued behind N unanswered turns` if an earlier turn is still open. |
+| opencode seems to hang | It is waiting for you: every tool result goes back to the model, so after each tool runs there is another turn to relay. Check the panel. The shim terminal says `awaiting a human`, or `queued behind N unanswered turns` if an earlier turn is still open. With `opencode-shim`, that output is in `.scratch/shim-background.log`. |
+| opencode is waiting but the panel has no turn | opencode may be asking **you** something in its own window. By default it asks before running the same tool call three times in a row, touching files outside the project, or reading `.env` files. Answer it there. |
 | opencode prints `[shim error] ...` | The turn failed (for example after 3 invalid replies, or a daily limit). The message says why. |
 | opencode cannot connect | Check the shim is running and that `baseURL` matches `COPILOT_SHIM_PORT`. |
 | The panel did not open | Open `http://127.0.0.1:8788` yourself, or check `COPILOT_PANEL_OPEN` is not `0`. |

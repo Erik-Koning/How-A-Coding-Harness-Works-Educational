@@ -102,3 +102,30 @@ button:disabled {
   background-repeat: repeat-y;
   animation: seam-flow-down 2.4s linear infinite;
 }
+
+/* The copy cue. On a turn nobody has copied yet, the one button to press next
+   is filled with the accent and pulses; it returns to its normal style the
+   moment the turn is copied. Accent, because it means exactly what the accent
+   always means here: a turn needs you. Under reduced motion it stays filled
+   but still. */
+@keyframes copy-cue-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(91 157 217 / 0.55);
+  }
+  60% {
+    box-shadow: 0 0 0 6px rgb(91 157 217 / 0);
+  }
+}
+
+.copy-cue {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-base);
+  font-weight: 600;
+  animation: copy-cue-pulse 1.8s ease-out infinite;
+}
+
+.copy-cue:hover {
+  background: color-mix(in srgb, var(--color-accent) 85%, white);
+}

@@ -21,7 +21,10 @@ export function buildSessionMarkdown(history: TurnRecord[]): string {
   }
 
   for (const t of history) {
-    out.push('---', '', `## Turn ${t.turnIndex}`, '')
+    out.push('---', '', `## Turn ${t.turnIndex} · chat ${t.chat.label}`, '')
+    if (t.systemPrompt && t !== first) {
+      out.push(`_Started chat ${t.chat.label} with its own system prompt (not repeated here)._`, '')
+    }
     out.push(`_${t.state}${t.committedAt ? ` · ${t.committedAt}` : ''}_`, '')
     out.push('### Sent to Copilot', '', '````text', t.query, '````', '')
     if (t.response) {
