@@ -1,0 +1,31 @@
+{
+  "name": "opencode-browser-shim",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^22.20.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "opencode-ai": "^1.18.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.0"
+  },
+  "scripts": {
+    "build": "npm run build:server && npm run build:panel",
+    "build:server": "tsc -p tsconfig.json && node scripts/copy-js.mjs",
+    "build:panel": "vite build panel",
+    "dev:panel": "vite panel",
+    "start": "node dist/shim-server.js",
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepare": "npm run build"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.57.0"
+  }
+}

@@ -1,0 +1,104 @@
+@import 'tailwindcss';
+
+/* Operator console, not a marketing page. Low chroma, one accent, content-first.
+   Fonts are named for machines that have them and degrade to solid system
+   stacks otherwise — the panel must work with no network. */
+@theme {
+  --color-base: #12141a;
+  --color-panel: #1b1e26;
+  --color-panel-2: #21252f;
+  --color-hairline: #252a34;
+  --color-ink: #e6e9ef;
+  --color-ink-dim: #8b93a3;
+  --color-ink-faint: #5c6373;
+
+  /* The single accent. Reserved for "a turn needs you" — nothing decorative
+     ever uses it, so its presence always means the same thing. */
+  --color-accent: #5b9dd9;
+  --color-accent-dim: #2f5c80;
+
+  --font-sans: 'Inter Tight', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Berkeley Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-base);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Visible focus, always. Operators use the keyboard. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Tailwind v4's preflight no longer sets cursor:pointer on buttons, so every
+   control reads as inert unless we put it back. */
+button:not(:disabled),
+[role='button']:not([aria-disabled='true']) {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+::selection {
+  background: var(--color-accent-dim);
+  color: var(--color-ink);
+}
+
+/* Scrollbars that recede */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-hairline) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* The seam. This is the signature element: the visible moment where a human
+   becomes the wire. It carries direction, so which side is waiting is legible
+   from across the room. */
+@keyframes seam-flow-down {
+  from {
+    background-position: 0 -120px;
+  }
+  to {
+    background-position: 0 120px;
+  }
+}
+
+.seam {
+  width: 2px;
+  background: var(--color-hairline);
+  transition: background-color 240ms ease;
+}
+
+.seam-active {
+  background-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    var(--color-accent) 45%,
+    var(--color-accent) 55%,
+    transparent 100%
+  );
+  background-size: 100% 120px;
+  background-repeat: repeat-y;
+  animation: seam-flow-down 2.4s linear infinite;
+}

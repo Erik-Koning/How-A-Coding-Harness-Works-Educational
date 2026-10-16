@@ -1,0 +1,5 @@
+[
+  { "kind": "tool", "name": "bash", "arguments": { "command": "echo CAPTURE_MARKER_42", "description": "echo a marker" } },
+  { "kind": "tool", "name": "read", "arguments": { "filePath": "/Users/erikkoning/Documents/Work/opencodeViaBrowserChat/CONTEXT.md", "limit": 5 } },
+  { "kind": "text", "content": "Done. The marker was CAPTURE_MARKER_42." }
+]
