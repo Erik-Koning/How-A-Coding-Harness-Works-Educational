@@ -100,16 +100,44 @@ What each part does:
 
 ### Using it on another project
 
-opencode works on the folder you run it from. To point it at a different project:
+opencode works on the folder you start it in, so you can watch it work on any of your repos. You do
+not need to change anything in the other repo.
 
-1. Keep the shim running from this repo (`npm start` in this folder).
-2. Copy the `provider` block above into the other project's `opencode.json`, or into your global
-   config at `~/.config/opencode/opencode.json`.
-3. Run opencode in that project and choose the model `copilot-shim/m365-copilot`, either with the
-   `model` field or with `--model copilot-shim/m365-copilot`.
+Keep the shim running from this repo (`npm start` in this folder). Then, in a second terminal:
 
-Remember that opencode runs tools for real on your machine: it reads, edits and runs commands in
-that project. Try it on a scratch folder or a clean git checkout first.
+```bash
+cd ~/path/to/other-repo
+SHIM=~/path/to/How-A-Coding-Harness-Works-Educational
+OPENCODE_CONFIG=$SHIM/opencode.json $SHIM/node_modules/.bin/opencode
+```
+
+For a single task instead of the interactive interface, add `run "your task"` to the end of the
+last line.
+
+- `OPENCODE_CONFIG` tells opencode to load the shim provider from this repo's `opencode.json`.
+- `$SHIM/node_modules/.bin/opencode` is the opencode installed with this repo, so you do not need a
+  global install.
+- opencode's tool calls read, edit and run commands in the other repo.
+- Traces still go to `.scratch/shim-log/` in **this** repo, because the shim writes them to the
+  folder it was started from.
+- If the other repo has its own `opencode.json` that sets a `model`, add
+  `--model copilot-shim/m365-copilot` to make sure the shim is used.
+
+To make it a single command, add an alias to your shell config (`~/.zshrc` or `~/.bashrc`):
+
+```bash
+alias opencode-shim='OPENCODE_CONFIG=~/path/to/How-A-Coding-Harness-Works-Educational/opencode.json ~/path/to/How-A-Coding-Harness-Works-Educational/node_modules/.bin/opencode'
+```
+
+Then run `opencode-shim` (or `opencode-shim run "your task"`) in any repo.
+
+**Alternative:** copy the `provider` block above into the other repo's `opencode.json`, or into
+your global config at `~/.config/opencode/opencode.json`, and pick the model with
+`--model copilot-shim/m365-copilot`. This needs opencode installed globally, or the full path to
+this repo's copy as above.
+
+Remember that opencode runs tools for real on your machine. Try it on a scratch folder or a clean
+git checkout first.
 
 ## 4. Open your chat window
 

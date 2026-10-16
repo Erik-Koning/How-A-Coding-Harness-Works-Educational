@@ -97,6 +97,9 @@ npx opencode run "How many lines are in src/protocol.mjs?"
 
 The panel opens in your browser. Follow the banner at the top of it.
 
+To watch opencode work on one of your other repos instead, see
+[Using it on another project](SETUP.md#using-it-on-another-project).
+
 **For the full walkthrough, configuration and troubleshooting, see [SETUP.md](SETUP.md).**
 
 ## Where to look
