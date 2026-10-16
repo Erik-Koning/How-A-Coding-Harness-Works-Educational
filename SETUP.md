@@ -103,6 +103,28 @@ What each part does:
 opencode works on the folder you start it in, so you can watch it work on any of your repos. You do
 not need to change anything in the other repo.
 
+The easiest way is the install script, which adds an `opencode-shim` command. From this repo:
+
+```bash
+./install.sh
+```
+
+This runs `npm install` and writes the command to `~/.local/bin`. Then, from any repo:
+
+```bash
+opencode-shim                    # interactive UI
+opencode-shim run "your task"    # a single task
+```
+
+- If the shim is not running, `opencode-shim` starts it in the background first. Its output goes to
+  `.scratch/shim-background.log` in this repo. Stop it with `pkill -f shim-server`.
+- Any arguments are passed on to opencode, so `--model`, `run` and the rest work as usual.
+- `./install.sh --bin-dir DIR` puts the command somewhere else. `./install.sh --uninstall` removes it.
+- If `~/.local/bin` is not on your `PATH`, the script prints the line to add to your shell config.
+- If you move this repo, run `./install.sh` again.
+
+#### Without the install script
+
 Keep the shim running from this repo (`npm start` in this folder). Then, in a second terminal:
 
 ```bash
@@ -123,15 +145,7 @@ last line.
 - If the other repo has its own `opencode.json` that sets a `model`, add
   `--model copilot-shim/m365-copilot` to make sure the shim is used.
 
-To make it a single command, add an alias to your shell config (`~/.zshrc` or `~/.bashrc`):
-
-```bash
-alias opencode-shim='OPENCODE_CONFIG=~/path/to/How-A-Coding-Harness-Works-Educational/opencode.json ~/path/to/How-A-Coding-Harness-Works-Educational/node_modules/.bin/opencode'
-```
-
-Then run `opencode-shim` (or `opencode-shim run "your task"`) in any repo.
-
-**Alternative:** copy the `provider` block above into the other repo's `opencode.json`, or into
+**Or edit the other repo's config:** copy the `provider` block above into the other repo's `opencode.json`, or into
 your global config at `~/.config/opencode/opencode.json`, and pick the model with
 `--model copilot-shim/m365-copilot`. This needs opencode installed globally, or the full path to
 this repo's copy as above.
@@ -265,6 +279,7 @@ prompt is cut to its most relevant sections to fit within about 12,000 character
 
 | Command | What it does |
 | --- | --- |
+| `./install.sh` | Install dependencies, build everything, and add the `opencode-shim` command |
 | `npm install` | Install dependencies and build everything |
 | `npm start` | Start the shim and the panel |
 | `npm run build` | Rebuild the shim and the panel |
