@@ -154,3 +154,8 @@ This project is for learning how coding harnesses work. To repeat the warning ab
 
 You are responsible for how you use this project and for complying with the terms of any service
 you use it with.
+
+## License
+
+[MIT](LICENSE). You can use, copy, modify and redistribute this project, including commercially, as
+long as you keep the copyright notice and license text with it.
